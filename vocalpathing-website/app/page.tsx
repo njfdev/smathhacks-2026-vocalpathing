@@ -16,10 +16,7 @@ function reducer(
 ) {
   switch (action.type) {
     case "upsert":
-      return {
-        ...state,
-        [action.id!]: { ...state[action.id!], ...action.data },
-      };
+      return { ...state, [action.id!]: action.data };
     case "remove": {
       const next = { ...state };
       delete next[action.id!];
@@ -110,26 +107,6 @@ export default function Home() {
               },
             });
           }
-          if (msg.type === "classification") {
-            dispatch({
-              type: "upsert",
-              id: msg.from,
-              data: {
-                classification: {
-                  topClass: msg.topClass,
-                  topScore: msg.topScore,
-                  scores: msg.scores,
-                },
-              },
-            });
-          }
-          if (msg.type === "status") {
-            dispatch({
-              type: "upsert",
-              id: msg.from,
-              data: { modelStatus: msg.status },
-            });
-          }
           if (msg.type === "disconnect") {
             dispatch({ type: "remove", id: msg.from });
             nextPlayTimeRef.current.delete(msg.from);
@@ -167,80 +144,32 @@ export default function Home() {
   const entries = Object.entries(clientData);
 
   return (
-    <div className="m-8">
-      <h1 className="text-white text-3xl font-bold mb-4">
-        Marine Vocal Pathing Dashboard
-      </h1>
+    <div className="p-6">
+      <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
 
-      <Button
-        variant="solid"
-        className="bg-rose-400 text-white"
-        onPress={() => router.push("/recorder")}
-      >
-        Make this device a recorder
-      </Button>
+      <div className="flex gap-2 mb-6">
+        <Button onPress={() => router.push("/recorder")}>
+          Start Recording
+        </Button>
+        {!listeningEnabled ? (
+          <Button color="primary" onPress={enableListening}>
+            Start Listening
+          </Button>
+        ) : (
+          <Button color="danger" onPress={disableListening}>
+            Stop Listening
+          </Button>
+        )}
+      </div>
 
-      <div></div>
-
-      <Button
-        className="my-4"
-        color={`${listeningEnabled ? "danger" : "secondary"}`}
-        onPress={listeningEnabled ? disableListening : enableListening}
-      >
-        {listeningEnabled ? "Stop Listening" : "Start Listening"}
-      </Button>
-
-      {entries.length === 0 && (
-        <p className="text-white font-bold text-lg">No connected clients.</p>
-      )}
+      {entries.length === 0 && <p>No connected clients.</p>}
 
       {entries.map(([id, data]) => (
-        <div key={id} className="p-4 border-white border-2 rounded-2xl mb-2">
-          <p className="text-white text-sm">
-            Client: <span className="font-mono">{id}</span>
-          </p>
-          <p className="text-white text-sm">Last seen: {data.lastSeen}</p>
+        <div key={id} className="p-4 border rounded mb-2">
+          <p className="font-mono text-sm">Client: {id.slice(0, 8)}...</p>
+          <p className="text-sm">Last seen: {data.lastSeen}</p>
           {data.streaming && (
-            <p className="text-sm font-bold text-green-400">Streaming audio</p>
-          )}
-          {data.modelStatus && (
-            <p className="text-sm font-bold text-yellow-300">
-              Model:{" "}
-              {data.modelStatus === "loading_model" ? "Loading..." : "Ready"}
-            </p>
-          )}
-          {data.classification && (
-            <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
-              <p className="text-sm font-semibold">
-                Detected: {data.classification.topClass.replace(/_/g, " ")}
-              </p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Confidence: {(data.classification.topScore * 100).toFixed(1)}%
-              </p>
-              <div className="mt-1 space-y-0.5">
-                {Object.entries(
-                  data.classification.scores as Record<string, number>,
-                )
-                  .sort(([, a], [, b]) => b - a)
-                  .slice(0, 3)
-                  .map(([name, score]) => (
-                    <div key={name} className="flex items-center gap-2 text-xs">
-                      <span className="w-36 truncate">
-                        {name.replace(/_/g, " ")}
-                      </span>
-                      <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded h-2">
-                        <div
-                          className="bg-blue-500 h-2 rounded"
-                          style={{ width: `${score * 100}%` }}
-                        />
-                      </div>
-                      <span className="w-12 text-right">
-                        {(score * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            </div>
+            <p className="text-sm text-green-500">Streaming audio</p>
           )}
         </div>
       ))}
