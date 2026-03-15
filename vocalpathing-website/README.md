@@ -2,7 +2,13 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+First, generate the local key:
+
+```bash
+mkcert localhost
+```
+
+Then, run the development server:
 
 ```bash
 npm run dev
