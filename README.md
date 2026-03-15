@@ -55,7 +55,7 @@ The model can detect 12 types:
 
 ### Triangulation
 
-When 3 or more recorders are connected, the server starts `triangulate_stream.py`. It receives audio from all 3 microphones simultaneously and calculates the XY position of the sound source using TDOA (Time Difference of Arrival). This works by measuring how much earlier or later the sound arrives at each microphone compared to the others, then solving for the position that best explains those timing differences.
+When 3 or more recorders are connected, the server starts `triangulate_stream.py`. We are able to use the difference in time it takes for a sound to reach each microphone. Since sound travels at a fixed speed, if a sound is closer to one mic it will arrive there slightly earlier. By measuring those tiny time gaps across all 3 microphones, we can figure out where the only point in space is that explains all of them at once. That point is where the sound came from.
 
 ---
 
