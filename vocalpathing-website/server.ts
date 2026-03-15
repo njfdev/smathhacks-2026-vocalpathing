@@ -24,6 +24,9 @@ const options = {
 const clients = new Map();
 const audioBuffers = new Map<string, Buffer[]>();
 const classifierProcesses = new Map<string, ChildProcess>();
+const micClientOrder: string[] = []; // tracks which client = mic 0, 1, 2
+let triangulatorProcess: ChildProcess | null = null;
+let micPositions: number[][] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 1.0, 0.0]];
 
 mkdirSync("recordings", { recursive: true });
 
@@ -104,6 +107,58 @@ function killClassifier(clientId: string) {
   }
 }
 
+function spawnTriangulator() {
+  // Kill any existing triangulator before spawning a new one
+  if (triangulatorProcess) {
+    triangulatorProcess.stdin?.end();
+    triangulatorProcess.kill();
+    triangulatorProcess = null;
+  }
+  const mlDir = path.resolve(__dirname, "..", "ml_stuff");
+  const scriptPath = path.join(mlDir, "triangulate_stream.py");
+  const pythonPath = path.resolve(__dirname, "..", "venv", "bin", "python3");
+  const [m0, m1, m2] = micPositions;
+  const child = spawn(
+    pythonPath,
+    [
+      scriptPath,
+      "--sr", "48000",
+      "--mic0", ...m0.map(String),
+      "--mic1", ...m1.map(String),
+      "--mic2", ...m2.map(String),
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+
+  console.log(`[triangulator] Spawned (pid=${child.pid})`);
+
+  // Prevent EPIPE from crashing the server if Python dies
+  child.stdin!.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED") return;
+    console.error("[triangulator] stdin error:", err);
+  });
+
+  const rl = createInterface({ input: child.stdout! });
+  rl.on("line", (line: string) => {
+    try {
+      JSON.parse(line); // validate before broadcasting
+      sendToDashboards(line);
+    } catch {}
+  });
+
+  child.stderr!.on("data", (data: Buffer) => {
+    const text = data.toString().trim();
+    if (text) console.error("[triangulator]", text);
+  });
+
+  child.on("exit", (code: any, signal: any) => {
+    console.log(`[triangulator] Exited (code=${code}, signal=${signal})`);
+    triangulatorProcess = null;
+  });
+
+  triangulatorProcess = child;
+}
+
 app.prepare().then(() => {
   const server = createServer(options, (req, res) => {
     const parsedUrl = parse(req.url!, true);
@@ -136,6 +191,17 @@ app.prepare().then(() => {
         }
 
         killClassifier(clientId);
+
+        // Remove from mic order and kill triangulator if a mic disconnects
+        const micIdx = micClientOrder.indexOf(clientId);
+        if (micIdx !== -1) {
+          micClientOrder.splice(micIdx, 1);
+          if (triangulatorProcess) {
+            triangulatorProcess.stdin?.end();
+            triangulatorProcess.kill();
+            triangulatorProcess = null;
+          }
+        }
 
         const notice = JSON.stringify({
           type: "disconnect",
@@ -171,6 +237,15 @@ app.prepare().then(() => {
           if (child && child.stdin && !child.stdin.destroyed) {
             child.stdin.write(audioData);
           }
+
+          // Pipe to triangulator with mic index + length prefix
+          const micIndex = micClientOrder.indexOf(clientId);
+          if (micIndex !== -1 && triangulatorProcess?.stdin && !triangulatorProcess.stdin.destroyed) {
+            const header = Buffer.alloc(5);
+            header.writeUInt8(micIndex, 0);
+            header.writeUInt32LE(audioData.length, 1);
+            triangulatorProcess.stdin.write(Buffer.concat([header, audioData]));
+          }
         }
         return;
       }
@@ -186,6 +261,14 @@ app.prepare().then(() => {
           if (role === "client" && clientId) {
             spawnClassifier(clientId);
 
+            // Track mic order for triangulation (first 3 clients = mic 0, 1, 2)
+            if (!micClientOrder.includes(clientId)) {
+              micClientOrder.push(clientId);
+            }
+            if (micClientOrder.length === 3 && !triangulatorProcess) {
+              spawnTriangulator();
+            }
+
             const notice = JSON.stringify({
               type: "connect",
               from: clientId,
@@ -193,6 +276,13 @@ app.prepare().then(() => {
             });
             sendToDashboards(notice);
           }
+        }
+
+        // Handle mic position updates from the dashboard
+        if (msg.type === "set_mic_positions" && Array.isArray(msg.positions)) {
+          micPositions = msg.positions;
+          // Respawn triangulator with new positions if it's currently running
+          if (triangulatorProcess) spawnTriangulator();
         }
 
         if (role === "client" && msg.payload) {

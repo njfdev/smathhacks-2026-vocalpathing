@@ -33,6 +33,12 @@ function reducer(
 export default function Home() {
   const [clientData, dispatch] = useReducer(reducer, {});
   const [listeningEnabled, setListeningEnabled] = useState(false);
+  const [triangulation, setTriangulation] = useState<{ x: number; y: number } | null>(null);
+  const [micPositions, setMicPositions] = useState([
+    { x: 0, y: 0, z: 0 },
+    { x: 1, y: 0, z: 0 },
+    { x: 0.5, y: 1, z: 0 },
+  ]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextPlayTimeRef = useRef<Map<string, number>>(new Map());
   const lastUpdateRef = useRef<Map<string, number>>(new Map());
@@ -138,6 +144,9 @@ export default function Home() {
             dispatch({ type: "remove", id: msg.from });
             nextPlayTimeRef.current.delete(msg.from);
           }
+          if (msg.type === "triangulation") {
+            setTriangulation({ x: msg.x, y: msg.y });
+          }
         } catch {}
         return;
       }
@@ -193,6 +202,57 @@ export default function Home() {
       >
         {listeningEnabled ? "Stop Listening" : "Start Listening"}
       </Button>
+
+      {/* Triangulation result */}
+      {triangulation && (
+        <div className="p-4 border-white border-2 rounded-2xl mb-4">
+          <p className="text-white font-bold">Triangulated Position</p>
+          <p className="font-mono text-white">X: {triangulation.x.toFixed(4)} m</p>
+          <p className="font-mono text-white">Y: {triangulation.y.toFixed(4)} m</p>
+        </div>
+      )}
+
+      {/* Mic position inputs */}
+      <div className="p-4 border-white border-2 rounded-2xl mb-4">
+        <p className="text-white font-bold mb-2">Microphone Positions (meters)</p>
+        {micPositions.map((pos, i) => (
+          <div key={i} className="flex items-center gap-2 mb-2">
+            <span className="text-white text-sm w-12">Mic {i}</span>
+            {(["x", "y", "z"] as const).map((axis) => (
+              <label key={axis} className="flex items-center gap-1">
+                <span className="text-white text-xs uppercase">{axis}</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={pos[axis]}
+                  onChange={(e) =>
+                    setMicPositions((prev) =>
+                      prev.map((p, idx) =>
+                        idx === i ? { ...p, [axis]: parseFloat(e.target.value) || 0 } : p
+                      )
+                    )
+                  }
+                  className="w-20 px-1 py-0.5 rounded text-black text-sm font-mono"
+                />
+              </label>
+            ))}
+          </div>
+        ))}
+        <Button
+          size="sm"
+          className="mt-1"
+          onPress={() =>
+            sendMessage(
+              JSON.stringify({
+                type: "set_mic_positions",
+                positions: micPositions.map((p) => [p.x, p.y, p.z]),
+              })
+            )
+          }
+        >
+          Apply
+        </Button>
+      </div>
 
       {entries.length === 0 && (
         <p className="text-white font-bold text-lg">No connected clients.</p>
