@@ -4,11 +4,6 @@ import { useWebSocketWrapper } from "@/hooks/ws";
 import { Button } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import {
-  AiFillPauseCircle,
-  AiOutlinePlayCircle,
-  AiOutlineStop,
-} from "react-icons/ai";
 import { ReadyState } from "react-use-websocket";
 import { v4 as uuidv4 } from "uuid";
 
@@ -18,10 +13,9 @@ export default function Recorder() {
   const router = useRouter();
   const [isRecording, setIsRecording] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  
-  const [syncTime, setSyncTime] = useState(0);
-  const [syncFrame, setSyncFrame] = useState(-1);
+  const syncRef = useRef<{ wallTime: number; frame: number } | null>(null);
 
   const { sendMessage, sendJsonMessage, readyState } = useWebSocketWrapper(
     () => {},
@@ -36,66 +30,75 @@ export default function Recorder() {
   const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
 
-    processor.onaudioprocess = (e) => {
-      if (readyState === ReadyState.OPEN) {
-        const pcm = new Float32Array(e.inputBuffer.getChannelData(0));
-        if (syncFrame == -1) {
-          setSyncFrame(0);
-          setSyncTime(e.timeStamp);
-        }
-        sendMessage(pcm.buffer);
-      }
+    await ctx.audioWorklet.addModule("/audio-processor.js");
+
+    const source = ctx.createMediaStreamSource(stream);
+    const workletNode = new AudioWorkletNode(ctx, "timestamp-processor");
+
+    syncRef.current = {
+      wallTime: performance.timeOrigin + performance.now(),
+      frame: -1, 
     };
 
-    // Connect through zero-gain node to avoid feedback
+    workletNode.port.onmessage = (e) => {
+      const { pcm, frame, sampleRate: sr } = e.data as {
+        pcm: Float32Array;
+        frame: number;
+        sampleRate: number;
+      };
+
+      if (readyState !== ReadyState.OPEN) return;
+
+      if (syncRef.current && syncRef.current.frame === -1) {
+        syncRef.current.frame = frame;
+      }
+
+      const sync = syncRef.current!;
+      const deviceTimestamp =
+        sync.wallTime + ((frame - sync.frame) / sr) * 1000;
+
+      const tsBytes = new Float64Array([deviceTimestamp]);
+      const pcmBytes = new Uint8Array(pcm.buffer);
+      const packet = new Uint8Array(8 + pcmBytes.length);
+      packet.set(new Uint8Array(tsBytes.buffer), 0);
+      packet.set(pcmBytes, 8);
+      sendMessage(packet.buffer);
+    };
+
     const gain = ctx.createGain();
     gain.gain.value = 0;
-    source.connect(processor);
-    processor.connect(gain);
+    source.connect(workletNode);
+    workletNode.connect(gain);
     gain.connect(ctx.destination);
 
     audioContextRef.current = ctx;
+    workletNodeRef.current = workletNode;
     streamRef.current = stream;
     setIsRecording(true);
   };
 
   const stopRecording = () => {
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    syncRef.current = null;
     setIsRecording(false);
-    setSyncFrame(-1);
   };
 
   return (
-    <div className="flex items-center flex-col m-8">
-      <h1 className="text-5xl font-extrabold text-white">Ocean Monitor</h1>
+    <div>
+      <h1>This is a recording device.</h1>
+      <Button onPress={() => router.push("/")}>Return to Dashboard</Button>
 
       <Button
-        className="mt-8 w-48 h-48 text-white rounded-full"
+        className="mt-8"
         onPress={isRecording ? stopRecording : startRecording}
-        isIconOnly={true}
-        variant="light"
-        startContent={
-          isRecording ? (
-            <AiFillPauseCircle size={600} />
-          ) : (
-            <AiOutlinePlayCircle size={600} />
-          )
-        }
-      ></Button>
-
-      <Button
-        className="mt-16 w-[16rem] bg-rose-400 text-white font-bold"
-        variant="solid"
-        size="lg"
-        onPress={() => router.push("/")}
       >
-        Return to Dashboard
+        {isRecording ? "Stop" : "Start"} Recording
       </Button>
     </div>
   );

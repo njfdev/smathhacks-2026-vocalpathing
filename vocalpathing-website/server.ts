@@ -149,18 +149,27 @@ app.prepare().then(() => {
     ws.on("message", (message: Buffer, isBinary: boolean) => {
       if (isBinary) {
         if (role === "client" && clientId) {
-          if (!audioBuffers.has(clientId)) audioBuffers.set(clientId, []);
-          audioBuffers.get(clientId)!.push(Buffer.from(message));
+          // First 8 bytes = Float64LE device timestamp, rest = PCM audio
+          const buf = Buffer.from(message);
+          const deviceTimestamp = buf.readDoubleLE(0);
+          const audioData = buf.subarray(8);
 
+          if (!audioBuffers.has(clientId)) audioBuffers.set(clientId, []);
+          audioBuffers.get(clientId)!.push(Buffer.from(audioData));
+
+          // Envelope: [idLen(1), id(N), timestamp(8), audio(...)]
           const idBuf = Buffer.from(clientId, "utf-8");
           const header = Buffer.alloc(1);
           header.writeUInt8(idBuf.length, 0);
-          const envelope = Buffer.concat([header, idBuf, message]);
+          const tsBuf = Buffer.alloc(8);
+          tsBuf.writeDoubleLE(deviceTimestamp, 0);
+          const envelope = Buffer.concat([header, idBuf, tsBuf, audioData]);
           sendToDashboards(envelope);
 
+          // Pipe only the raw PCM audio (no timestamp) to the classifier
           const child = classifierProcesses.get(clientId);
           if (child && child.stdin && !child.stdin.destroyed) {
-            child.stdin.write(message);
+            child.stdin.write(audioData);
           }
         }
         return;

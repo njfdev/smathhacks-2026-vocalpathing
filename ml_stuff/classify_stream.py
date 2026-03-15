@@ -39,7 +39,8 @@ def main():
 
     input_sr = args.sr
     client_id = args.client_id
-    bytes_per_window = input_sr * WINDOW_SEC * 4
+    step_sec = 1  # slide by 1 second for rolling updates
+    bytes_per_step = input_sr * step_sec * 4  # read 1 second at a time
 
     print(
         json.dumps({"type": "status", "from": client_id, "status": "loading_model"}),
@@ -75,17 +76,30 @@ def main():
         flush=True,
     )
 
+    # Rolling buffer: accumulate audio, run inference on last 5s every 1s
+    ring = np.empty(0, dtype=np.float32)
+    window_samples = input_sr * WINDOW_SEC  # 5s at input rate
+
     while True:
+        # Read 1 second of audio
         raw = b""
-        while len(raw) < bytes_per_window:
-            chunk = sys.stdin.buffer.read(bytes_per_window - len(raw))
+        while len(raw) < bytes_per_step:
+            chunk = sys.stdin.buffer.read(bytes_per_step - len(raw))
             if not chunk:
                 return
             raw += chunk
 
         num_samples = len(raw) // 4
-        audio_np = np.array(struct.unpack(f"<{num_samples}f", raw), dtype=np.float32)
+        new_audio = np.array(struct.unpack(f"<{num_samples}f", raw), dtype=np.float32)
 
+        ring = np.concatenate([ring, new_audio])
+        if len(ring) > window_samples:
+            ring = ring[-window_samples:]
+
+        if len(ring) < window_samples:
+            continue
+
+        audio_np = ring
         if input_sr != model_sr:
             audio_np = librosa.resample(audio_np, orig_sr=input_sr, target_sr=model_sr)
 
@@ -110,7 +124,7 @@ def main():
         top_idx = torch.argmax(scores_tensor, dim=1)[0].item()
         top_class = CLASS_NAMES[top_idx]
 
-        if scores_list[top_idx] < 0.5:
+        if scores_list[top_idx] < 0.3:
             top_class = "None"
             top_score = 0.0
         else:

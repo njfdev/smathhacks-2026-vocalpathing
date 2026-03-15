@@ -51,7 +51,23 @@ export default function Home() {
   }, []);
 
   const feedAudioChunk = useCallback(
-    (clientId: string, audioData: ArrayBuffer) => {
+    (clientId: string, deviceTimestamp: number, audioData: ArrayBuffer) => {
+      // Update UI state (throttled to once per second) regardless of listening
+      const wallNow = Date.now();
+      const lastUpdate = lastUpdateRef.current.get(clientId) ?? 0;
+      if (wallNow - lastUpdate > 1000) {
+        lastUpdateRef.current.set(clientId, wallNow);
+        dispatch({
+          type: "upsert",
+          id: clientId,
+          data: {
+            streaming: true,
+            lastSeen: new Date().toLocaleTimeString(),
+            deviceTimestamp,
+          },
+        });
+      }
+
       const ctx = audioContextRef.current;
       if (!ctx) return;
 
@@ -69,18 +85,6 @@ export default function Home() {
 
       source.start(nextTime);
       nextPlayTimeRef.current.set(clientId, nextTime + buffer.duration);
-
-      // Update UI state (throttled to once per second)
-      const wallNow = Date.now();
-      const lastUpdate = lastUpdateRef.current.get(clientId) ?? 0;
-      if (wallNow - lastUpdate > 1000) {
-        lastUpdateRef.current.set(clientId, wallNow);
-        dispatch({
-          type: "upsert",
-          id: clientId,
-          data: { streaming: true, lastSeen: new Date().toLocaleTimeString() },
-        });
-      }
     },
     [],
   );
@@ -138,15 +142,15 @@ export default function Home() {
         return;
       }
 
-      // Binary message = PCM audio data
       const blob = event.data as Blob;
       blob.arrayBuffer().then((buffer) => {
         const view = new DataView(buffer);
         const idLen = view.getUint8(0);
         const idBytes = new Uint8Array(buffer, 1, idLen);
         const clientId = new TextDecoder().decode(idBytes);
-        const audioData = buffer.slice(1 + idLen);
-        feedAudioChunk(clientId, audioData);
+        const deviceTimestamp = view.getFloat64(1 + idLen, true);
+        const audioData = buffer.slice(1 + idLen + 8);
+        feedAudioChunk(clientId, deviceTimestamp, audioData);
       });
     },
     [feedAudioChunk],
