@@ -4,6 +4,7 @@ import { useWebSocketWrapper } from "@/hooks/ws";
 import { Button } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { AiFillPauseCircle, AiFillPlayCircle } from "react-icons/ai";
 import { ReadyState } from "react-use-websocket";
 import { v4 as uuidv4 } from "uuid";
 
@@ -38,11 +39,15 @@ export default function Recorder() {
 
     syncRef.current = {
       wallTime: performance.timeOrigin + performance.now(),
-      frame: -1, 
+      frame: -1,
     };
 
     workletNode.port.onmessage = (e) => {
-      const { pcm, frame, sampleRate: sr } = e.data as {
+      const {
+        pcm,
+        frame,
+        sampleRate: sr,
+      } = e.data as {
         pcm: Float32Array;
         frame: number;
         sampleRate: number;
@@ -90,15 +95,30 @@ export default function Recorder() {
   };
 
   return (
-    <div>
-      <h1>This is a recording device.</h1>
-      <Button onPress={() => router.push("/")}>Return to Dashboard</Button>
+    <div className="flex flex-col items-center m-8">
+      <h1 className="font-bold text-4xl text-white">Marine Recorder</h1>
 
       <Button
-        className="mt-8"
+        className="mt-16 rounded-full w-[250px] h-[250px] text-white"
         onPress={isRecording ? stopRecording : startRecording}
+        isIconOnly={true}
+        variant="light"
+        startContent={
+          isRecording ? (
+            <AiFillPauseCircle size={250} />
+          ) : (
+            <AiFillPlayCircle size={250} />
+          )
+        }
+      ></Button>
+
+      <Button
+        className="mt-16 bg-rose-400 text-white! text-lg font-bold"
+        variant="solid"
+        size="lg"
+        onPress={() => router.push("/")}
       >
-        {isRecording ? "Stop" : "Start"} Recording
+        Return to Dashboard
       </Button>
     </div>
   );
