@@ -3,6 +3,13 @@ import { parse } from "url";
 import next from "next";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { WebSocketServer } from "ws";
+import { spawn, ChildProcess } from "child_process";
+import { createInterface } from "readline";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const port = parseInt(process.env.PORT || "3000", 10);
 const dev = process.env.NODE_ENV !== "production";
@@ -16,8 +23,86 @@ const options = {
 
 const clients = new Map();
 const audioBuffers = new Map<string, Buffer[]>();
+const classifierProcesses = new Map<string, ChildProcess>();
 
 mkdirSync("recordings", { recursive: true });
+
+function sendToDashboards(message: string | Buffer) {
+  for (const [, info] of clients) {
+    if (info.role === "dashboard" && info.ws.readyState === WebSocket.OPEN) {
+      info.ws.send(message);
+    }
+  }
+}
+
+function spawnClassifier(clientId: string) {
+  const mlDir = path.resolve(__dirname, "..", "ml_stuff");
+  const scriptPath = path.join(mlDir, "classify_stream.py");
+  const pythonPath = path.resolve(__dirname, "..", "venv", "bin", "python3");
+  const child = spawn(
+    pythonPath,
+    [scriptPath, "--sr", "48000", "--client-id", clientId],
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+
+  console.log(
+    `[classifier] Spawned Python process (pid=${child.pid}) for client ${clientId}`,
+  );
+
+  // Prevent EPIPE from crashing the server if Python dies
+  child.stdin!.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED") return;
+    console.error(`[classifier:${clientId}] stdin error:`, err);
+  });
+
+  const rl = createInterface({ input: child.stdout! });
+  rl.on("line", (line) => {
+    try {
+      const result = JSON.parse(line);
+      console.log(
+        `[classifier] ${clientId}: ${result.type}`,
+        result.topClass ?? result.status ?? "",
+      );
+      sendToDashboards(JSON.stringify(result));
+    } catch (e) {
+      console.error(
+        `[classifier] Failed to parse output from ${clientId}:`,
+        line,
+      );
+    }
+  });
+
+  child.stderr!.on("data", (data: Buffer) => {
+    const text = data.toString().trim();
+    if (text) {
+      console.error(`[classifier:${clientId}] ${text}`);
+    }
+  });
+
+  child.on("exit", (code, signal) => {
+    console.log(
+      `[classifier] Python process for ${clientId} exited (code=${code}, signal=${signal})`,
+    );
+    classifierProcesses.delete(clientId);
+  });
+
+  classifierProcesses.set(clientId, child);
+  return child;
+}
+
+function killClassifier(clientId: string) {
+  const child = classifierProcesses.get(clientId);
+  if (child) {
+    console.log(
+      `[classifier] Killing Python process (pid=${child.pid}) for client ${clientId}`,
+    );
+    child.stdin?.end();
+    child.kill();
+    classifierProcesses.delete(clientId);
+  }
+}
 
 app.prepare().then(() => {
   const server = createServer(options, (req, res) => {
@@ -50,18 +135,13 @@ app.prepare().then(() => {
           audioBuffers.delete(clientId);
         }
 
+        killClassifier(clientId);
+
         const notice = JSON.stringify({
           type: "disconnect",
           from: clientId,
         });
-        for (const [, info] of clients) {
-          if (
-            info.role === "dashboard" &&
-            info.ws.readyState === WebSocket.OPEN
-          ) {
-            info.ws.send(notice);
-          }
-        }
+        sendToDashboards(notice);
       }
       if (clientId) clients.delete(clientId);
     });
@@ -76,14 +156,11 @@ app.prepare().then(() => {
           const header = Buffer.alloc(1);
           header.writeUInt8(idBuf.length, 0);
           const envelope = Buffer.concat([header, idBuf, message]);
+          sendToDashboards(envelope);
 
-          for (const [, info] of clients) {
-            if (
-              info.role === "dashboard" &&
-              info.ws.readyState === WebSocket.OPEN
-            ) {
-              info.ws.send(envelope);
-            }
+          const child = classifierProcesses.get(clientId);
+          if (child && child.stdin && !child.stdin.destroyed) {
+            child.stdin.write(message);
           }
         }
         return;
@@ -98,19 +175,14 @@ app.prepare().then(() => {
           clients.set(clientId, { role, ws });
 
           if (role === "client" && clientId) {
+            spawnClassifier(clientId);
+
             const notice = JSON.stringify({
               type: "connect",
               from: clientId,
               timestamp: Date.now(),
             });
-            for (const [, info] of clients) {
-              if (
-                info.role === "dashboard" &&
-                info.ws.readyState === WebSocket.OPEN
-              ) {
-                info.ws.send(notice);
-              }
-            }
+            sendToDashboards(notice);
           }
         }
 
@@ -121,14 +193,7 @@ app.prepare().then(() => {
             timestamp: Date.now(),
             payload: msg.payload,
           });
-          for (const [, info] of clients) {
-            if (
-              info.role === "dashboard" &&
-              info.ws.readyState === WebSocket.OPEN
-            ) {
-              info.ws.send(envelope);
-            }
-          }
+          sendToDashboards(envelope);
         }
       } catch (e) {
         console.error(e);

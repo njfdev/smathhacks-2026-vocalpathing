@@ -4,6 +4,11 @@ import { useWebSocketWrapper } from "@/hooks/ws";
 import { Button } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import {
+  AiFillPauseCircle,
+  AiOutlinePlayCircle,
+  AiOutlineStop,
+} from "react-icons/ai";
 import { ReadyState } from "react-use-websocket";
 import { v4 as uuidv4 } from "uuid";
 
@@ -14,6 +19,9 @@ export default function Recorder() {
   const [isRecording, setIsRecording] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  
+  const [syncTime, setSyncTime] = useState(0);
+  const [syncFrame, setSyncFrame] = useState(-1);
 
   const { sendMessage, sendJsonMessage, readyState } = useWebSocketWrapper(
     () => {},
@@ -34,6 +42,10 @@ export default function Recorder() {
     processor.onaudioprocess = (e) => {
       if (readyState === ReadyState.OPEN) {
         const pcm = new Float32Array(e.inputBuffer.getChannelData(0));
+        if (syncFrame == -1) {
+          setSyncFrame(0);
+          setSyncTime(e.timeStamp);
+        }
         sendMessage(pcm.buffer);
       }
     };
@@ -56,18 +68,34 @@ export default function Recorder() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     setIsRecording(false);
+    setSyncFrame(-1);
   };
 
   return (
-    <div>
-      <h1>This is a recording device.</h1>
-      <Button onPress={() => router.push("/")}>Return to Dashboard</Button>
+    <div className="flex items-center flex-col m-8">
+      <h1 className="text-5xl font-extrabold text-white">Ocean Monitor</h1>
 
       <Button
-        className="mt-8"
+        className="mt-8 w-48 h-48 text-white rounded-full"
         onPress={isRecording ? stopRecording : startRecording}
+        isIconOnly={true}
+        variant="light"
+        startContent={
+          isRecording ? (
+            <AiFillPauseCircle size={600} />
+          ) : (
+            <AiOutlinePlayCircle size={600} />
+          )
+        }
+      ></Button>
+
+      <Button
+        className="mt-16 w-[16rem] bg-rose-400 text-white font-bold"
+        variant="solid"
+        size="lg"
+        onPress={() => router.push("/")}
       >
-        {isRecording ? "Stop" : "Start"} Recording
+        Return to Dashboard
       </Button>
     </div>
   );
