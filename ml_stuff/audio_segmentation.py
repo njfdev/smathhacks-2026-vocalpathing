@@ -1,5 +1,5 @@
-import torch
 import soundfile as sf
+import torch
 from asteroid.models import BaseModel
 
 # Asteroid's from_pretrained doesn't forward kwargs to torch.load,
@@ -10,7 +10,7 @@ model = BaseModel.from_pretrained("mpariente/DPRNNTasNet-ks2_WHAM_sepclean")
 torch.load = _original_load
 
 # Or simply a file name:
-separated = model.separate("./test_recordings/talking_while_tapping.m4a")
+separated = model.separate("./test_recordings/talking_while_tapping.m4a", resample=True)
 
 # Save separated sources
 for i in range(separated.shape[1]):
