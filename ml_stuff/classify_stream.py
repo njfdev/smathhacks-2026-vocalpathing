@@ -2,6 +2,14 @@ import argparse
 import json
 import struct
 import sys
+import types
+
+# tensorflow_hub uses pkg_resources which is broken in newer setuptools.
+# Patch it with the equivalent from the `packaging` library before importing.
+import packaging.version
+_pkg_stub = types.ModuleType("pkg_resources")
+_pkg_stub.parse_version = packaging.version.Version  # type: ignore
+sys.modules.setdefault("pkg_resources", _pkg_stub)
 
 import librosa
 import numpy as np

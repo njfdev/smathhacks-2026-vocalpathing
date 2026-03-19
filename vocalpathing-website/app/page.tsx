@@ -179,135 +179,234 @@ export default function Home() {
 
   const entries = Object.entries(clientData);
 
+  // Build the SVG map coordinates from mic positions + triangulation result
+  const buildMap = (W: number, H: number) => {
+    const allPoints = [
+      ...micPositions.map((p) => [p.x, p.y]),
+      ...(triangulation ? [[triangulation.x, triangulation.y]] : []),
+    ];
+    let minX = Math.min(...allPoints.map((p) => p[0]));
+    let maxX = Math.max(...allPoints.map((p) => p[0]));
+    let minY = Math.min(...allPoints.map((p) => p[1]));
+    let maxY = Math.max(...allPoints.map((p) => p[1]));
+
+    // Add padding around the edges so dots aren't right on the border
+    const padX = (maxX - minX || 1) * 0.3;
+    const padY = (maxY - minY || 1) * 0.3;
+    minX -= padX; maxX += padX;
+    minY -= padY; maxY += padY;
+
+    // Convert world coords to SVG pixels (flip Y so up = positive)
+    const toSvg = (wx: number, wy: number) => ({
+      x: ((wx - minX) / (maxX - minX)) * W,
+      y: (1 - (wy - minY) / (maxY - minY)) * H,
+    });
+    return toSvg;
+  };
+
   return (
-    <div className="m-8">
-      <h1 className="text-white text-3xl font-bold mb-4">
-        Marine Vocal Pathing Dashboard
-      </h1>
+    <div className="min-h-screen flex flex-col">
 
-      <Button
-        variant="solid"
-        className="bg-rose-400 text-white"
-        onPress={() => router.push("/recorder")}
-      >
-        Make this device a recorder
-      </Button>
-
-      <div></div>
-
-      <Button
-        className="my-4"
-        color={`${listeningEnabled ? "danger" : "secondary"}`}
-        onPress={listeningEnabled ? disableListening : enableListening}
-      >
-        {listeningEnabled ? "Stop Listening" : "Start Listening"}
-      </Button>
-
-      {/* Triangulation result */}
-      {triangulation && (
-        <div className="p-4 border-white border-2 rounded-2xl mb-4">
-          <p className="text-white font-bold">Triangulated Position</p>
-          <p className="font-mono text-white">X: {triangulation.x.toFixed(4)} m</p>
-          <p className="font-mono text-white">Y: {triangulation.y.toFixed(4)} m</p>
+      {/* Header */}
+      <header className="flex items-center justify-between px-8 py-4 border-b border-white/20">
+        <h1 className="text-white text-2xl font-bold">
+          Marine Vocal Pathing Dashboard
+        </h1>
+        <div className="flex gap-3">
+          <Button
+            variant="solid"
+            className="bg-rose-400 text-white"
+            onPress={() => router.push("/recorder")}
+          >
+            Add Recorder
+          </Button>
+          <Button
+            color={listeningEnabled ? "danger" : "secondary"}
+            onPress={listeningEnabled ? disableListening : enableListening}
+          >
+            {listeningEnabled ? "Stop Listening" : "Start Listening"}
+          </Button>
         </div>
-      )}
+      </header>
 
-      {/* Mic position inputs */}
-      <div className="p-4 border-white border-2 rounded-2xl mb-4">
-        <p className="text-white font-bold mb-2">Microphone Positions (meters)</p>
-        {micPositions.map((pos, i) => (
-          <div key={i} className="flex items-center gap-2 mb-2">
-            <span className="text-white text-sm w-12">Mic {i}</span>
-            {(["x", "y", "z"] as const).map((axis) => (
-              <label key={axis} className="flex items-center gap-1">
-                <span className="text-white text-xs uppercase">{axis}</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={pos[axis]}
-                  onChange={(e) =>
-                    setMicPositions((prev) =>
-                      prev.map((p, idx) =>
-                        idx === i ? { ...p, [axis]: parseFloat(e.target.value) || 0 } : p
-                      )
-                    )
-                  }
-                  className="w-20 px-1 py-0.5 rounded text-black text-sm font-mono"
-                />
-              </label>
-            ))}
+      {/* Main two-column layout */}
+      <div className="flex-1 flex gap-6 p-6 overflow-hidden">
+
+        {/* Left column: map + mic position inputs */}
+        <div className="flex flex-col gap-4 w-96 shrink-0">
+
+          {/* Ocean map */}
+          <div className="rounded-2xl overflow-hidden border-white border-2">
+            {(() => {
+              const W = 384;
+              const H = 384;
+              const toSvg = buildMap(W, H);
+              return (
+                <svg width={W} height={H}>
+                  {/* Ocean background */}
+                  <rect width={W} height={H} fill="#0c2a4a" />
+                  {/* Subtle grid */}
+                  {[0.25, 0.5, 0.75].map((t) => (
+                    <g key={t}>
+                      <line x1={t * W} y1={0} x2={t * W} y2={H} stroke="#1a4060" strokeWidth={1} />
+                      <line x1={0} y1={t * H} x2={W} y2={t * H} stroke="#1a4060" strokeWidth={1} />
+                    </g>
+                  ))}
+                  {/* Mic dots */}
+                  {micPositions.map((pos, i) => {
+                    const { x, y } = toSvg(pos.x, pos.y);
+                    return (
+                      <g key={i}>
+                        <circle cx={x} cy={y} r={7} fill="white" opacity={0.9} />
+                        <text x={x + 10} y={y + 4} fill="white" fontSize={11} fontFamily="monospace">
+                          Mic {i}
+                        </text>
+                      </g>
+                    );
+                  })}
+                  {/* Triangulated source dot */}
+                  {triangulation && (() => {
+                    const { x, y } = toSvg(triangulation.x, triangulation.y);
+                    return (
+                      <g>
+                        <circle cx={x} cy={y} r={9} fill="#facc15" opacity={0.95} />
+                        <text x={x + 12} y={y + 4} fill="#facc15" fontSize={11} fontFamily="monospace">
+                          Source
+                        </text>
+                      </g>
+                    );
+                  })()}
+                </svg>
+              );
+            })()}
           </div>
-        ))}
-        <Button
-          size="sm"
-          className="mt-1"
-          onPress={() =>
-            sendMessage(
-              JSON.stringify({
-                type: "set_mic_positions",
-                positions: micPositions.map((p) => [p.x, p.y, p.z]),
-              })
-            )
-          }
-        >
-          Apply
-        </Button>
-      </div>
 
-      {entries.length === 0 && (
-        <p className="text-white font-bold text-lg">No connected clients.</p>
-      )}
-
-      {entries.map(([id, data]) => (
-        <div key={id} className="p-4 border-white border-2 rounded-2xl mb-2">
-          <p className="text-white text-sm">
-            Client: <span className="font-mono">{id}</span>
-          </p>
-          <p className="text-white text-sm">Last seen: {data.lastSeen}</p>
-          {data.streaming && (
-            <p className="text-sm font-bold text-green-400">Streaming audio</p>
-          )}
-          {data.modelStatus && (
-            <p className="text-sm font-bold text-yellow-300">
-              Model:{" "}
-              {data.modelStatus === "loading_model" ? "Loading..." : "Ready"}
+          {/* Numeric readout */}
+          {triangulation && (
+            <p className="font-mono text-white text-sm">
+              X: {triangulation.x.toFixed(3)} m &nbsp; Y: {triangulation.y.toFixed(3)} m
             </p>
           )}
-          {data.classification && (
-            <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
-              <p className="text-sm font-semibold">
-                Detected: {data.classification.topClass.replace(/_/g, " ")}
-              </p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Confidence: {(data.classification.topScore * 100).toFixed(1)}%
-              </p>
-              <div className="mt-1 space-y-0.5">
-                {Object.entries(
-                  data.classification.scores as Record<string, number>,
-                )
-                  .sort(([, a], [, b]) => b - a)
-                  .slice(0, 3)
-                  .map(([name, score]) => (
-                    <div key={name} className="flex items-center gap-2 text-xs">
-                      <span className="w-36 truncate">
-                        {name.replace(/_/g, " ")}
-                      </span>
-                      <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded h-2">
-                        <div
-                          className="bg-blue-500 h-2 rounded"
-                          style={{ width: `${score * 100}%` }}
-                        />
-                      </div>
-                      <span className="w-12 text-right">
-                        {(score * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                  ))}
+
+          {/* Mic position inputs */}
+          <div className="p-4 border-white border-2 rounded-2xl">
+            <p className="text-white font-bold mb-2">Microphone Positions (meters)</p>
+            {micPositions.map((pos, i) => (
+              <div key={i} className="flex items-center gap-2 mb-2">
+                <span className="text-white text-sm w-12">Mic {i}</span>
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <label key={axis} className="flex items-center gap-1">
+                    <span className="text-white text-xs uppercase">{axis}</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={pos[axis]}
+                      onChange={(e) =>
+                        setMicPositions((prev) =>
+                          prev.map((p, idx) =>
+                            idx === i ? { ...p, [axis]: parseFloat(e.target.value) || 0 } : p
+                          )
+                        )
+                      }
+                      className="w-20 px-1 py-0.5 rounded text-black text-sm font-mono"
+                    />
+                  </label>
+                ))}
               </div>
-            </div>
-          )}
+            ))}
+            <Button
+              size="sm"
+              className="mt-1"
+              onPress={() =>
+                sendMessage(
+                  JSON.stringify({
+                    type: "set_mic_positions",
+                    positions: micPositions.map((p) => [p.x, p.y, p.z]),
+                  })
+                )
+              }
+            >
+              Apply
+            </Button>
+          </div>
         </div>
-      ))}
+
+        {/* Right column: connected client cards */}
+        <div className="flex-1 overflow-y-auto space-y-4">
+          {entries.length === 0 && (
+            <p className="text-white font-bold text-lg">No connected clients.</p>
+          )}
+
+          {entries.map(([id, data]) => (
+            <div key={id} className="p-4 border-white border-2 rounded-2xl">
+
+              {/* Client header */}
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-white text-sm font-mono">{id}</p>
+                <div className="flex items-center gap-3">
+                  {data.streaming && (
+                    <p className="text-sm font-bold text-green-400">Streaming audio</p>
+                  )}
+                  {data.modelStatus && (
+                    <p className="text-sm font-bold text-yellow-300">
+                      Model: {data.modelStatus === "loading_model" ? "Loading..." : "Ready"}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <p className="text-white text-sm mb-3">Last seen: {data.lastSeen}</p>
+
+              {/* Top 3 classification predictions */}
+              {data.classification && (() => {
+                const top3 = Object.entries(data.classification.scores as Record<string, number>)
+                  .sort(([, a], [, b]) => b - a)
+                  .slice(0, 3);
+                const rankColors = ["#facc15", "#94a3b8", "#b45309"];
+                const rankLabels = ["1st", "2nd", "3rd"];
+                return (
+                  <div className="mt-2 p-3 bg-blue-900/20 rounded-xl space-y-3">
+                    <div className="mb-2">
+                      <p className="text-white text-sm font-semibold">
+                        Detected: {data.classification.topClass.replace(/_/g, " ")}
+                      </p>
+                      <p className="text-gray-400 text-sm">
+                        Confidence: {(data.classification.topScore * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                    {top3.map(([name, score], rank) => (
+                      <div key={name}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold w-6" style={{ color: rankColors[rank] }}>
+                              {rankLabels[rank]}
+                            </span>
+                            <span className="text-white text-sm font-semibold capitalize">
+                              {name.replace(/_/g, " ")}
+                            </span>
+                          </div>
+                          <span className="text-sm font-mono font-bold" style={{ color: rankColors[rank] }}>
+                            {(score * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                          <div
+                            className="h-2 rounded-full transition-all duration-500"
+                            style={{
+                              width: `${Math.max(0, score * 100)}%`,
+                              background: rankColors[rank],
+                              opacity: 0.85,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
